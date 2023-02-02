@@ -1,0 +1,190 @@
+name: Build Kernel-testv2
+on:
+  watch:
+    types: [started]
+
+  workflow_dispatch:
+     inputs:
+      KERNEL_SOURCE:
+        description: 'Kernel Source'
+        required: true
+        default: 'https://github.com/ajugeorge98/kernel_xiaomi_vayu.git'
+      KERNEL_SOURCE_BRANCH:
+        description: 'Branch'
+        required: true
+        default: 'main'
+      KERNEL_DEFCONFIG:
+        description: 'Defconfig'
+        required: true
+        default: 'vayu_user_defconfig'
+      KERNEL_FILE:
+        description: 'Your kernel out image name'
+        required: true
+        default: 'Image.gz'
+      CLANG_VERSION:
+        description: 'Clang version'
+        required: true
+        default: 'r450784d'
+      BUILD_EXTRA_COMMAND:
+        description: 'Extra build commands(e.g. LLVM=1 LLVM_IAS=1)'
+        required: false
+        default: 'LD=ld.lld'
+      DISABLE-LTO:
+        description: 'Disable LTO'
+        required: false
+        default: 'false'
+        type: boolean
+      USE_KERNELSU:
+        description: 'Use KernelSU'
+        required: true
+        default: 'false'
+        type: boolean
+      USE_KPROBES:
+        description: 'Use Kprobes'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    if: github.event.repository.owner.id == github.event.sender.id
+    steps:
+    - uses: actions/checkout@v3
+    - name: Setup Configuration
+      run: |
+        if [ $(cat config.env | grep "USE_CONFIG" | head -n 1 | cut -d "=" -f 2) = true ];then
+            echo "KERNEL_SOURCE=$(cat config.env | grep "KERNEL_SOURCE" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
+            echo "KERNEL_SOURCE_BRANCH=$(cat config.env | grep "KERNEL_SOURCE_BRANCH" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
+            echo "KERNEL_DEFCONFIG=$(cat config.env | grep "KERNEL_DEFCONFIG" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
+            echo "KERNEL_FILE=$(cat config.env | grep "KERNEL_FILE" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
+            echo "CLANG_VERSION=$(cat config.env | grep "CLANG_VERSION" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
+            echo "BUILD_EXTRA_COMMAND=$(cat config.env | grep "EXTRA_BUILD_COMMAND" | head -n 1 | cut -d ":" -f 2)" >> $GITHUB_ENV
+            echo "DISABLE-LTO=$(cat config.env | grep "DISABLE-LTO" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
+            echo "USE_KERNELSU=$(cat config.env | grep "USE_KERNELSU" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
+            echo "USE_KPROBES=$(cat config.env | grep "USE_KPROBES" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
+        else
+            echo "KERNEL_SOURCE=${{ github.event.inputs.KERNEL_SOURCE }}" >> $GITHUB_ENV
+            echo "KERNEL_SOURCE_BRANCH=${{ github.event.inputs.KERNEL_SOURCE_BRANCH }}" >> $GITHUB_ENV
+            echo "KERNEL_DEFCONFIG=${{ github.event.inputs.KERNEL_DEFCONFIG }}" >> $GITHUB_ENV
+            echo "KERNEL_FILE=${{ github.event.inputs.KERNEL_FILE }}" >> $GITHUB_ENV
+            echo "CLANG_VERSION=${{ github.event.inputs.CLANG_VERSION }}" >> $GITHUB_ENV
+            echo "BUILD_EXTRA_COMMAND=${{ github.event.inputs.BUILD_EXTRA_COMMAND }}" >> $GITHUB_ENV
+            echo "DISABLE-LTO=${{ github.event.inputs.DISABLE-LTO }}" >> $GITHUB_ENV
+            echo "USE_KERNELSU=${{ github.event.inputs.USE_KERNELSU }}" >> $GITHUB_ENV
+            echo "USE_KPROBES=${{ github.event.inputs.USE_KPROBES }}" >> $GITHUB_ENV
+        fi
+
+    - name: Setup build kernel environment
+      run: |
+        echo "BUILD_TIME=$(TZ=Asia/Shanghai date "+%Y%m%d%H%M")" >> $GITHUB_ENV
+        echo "DEVICE=$(echo ${{ env.KERNEL_DEFCONFIG }} | sed 's!vendor/!!;s/_defconfig//;s/_user//;s/-perf//')" >> $GITHUB_ENV
+        sudo apt-get update
+        sudo apt-get install git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 lib32ncurses5-dev libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler python2 python3
+
+    - name: Download Android-Kernel_tools
+      run: |
+        cd $GITHUB_WORKSPACE && mkdir kernel_workspace && cd kernel_workspace
+        git clone --depth=1 https://github.com/pkm774/android-kernel-tools tools
+    - name: Download kernel source
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        git clone ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} android-kernel --depth=1
+
+    - name: Setup KernelSU
+      if: env.USE_KERNELSU == 'true'
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        curl -LSs "https://raw.githubusercontent.com/ajugeorge98/KernelSU/main/kernel/setup.sh" | bash -
+        if [ ${{ env.USE_KPROBES }} = true ]; then
+            echo "CONFIG_MODULES=y" >> arch/arm64/configs/${{ env.KERNEL_DEFCONFIG }}
+            echo "CONFIG_KPROBES=y" >> arch/arm64/configs/${{ env.KERNEL_DEFCONFIG }}
+            echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/${{ env.KERNEL_DEFCONFIG }}
+            echo "CONFIG_KPROBE_EVENTS=y" >> arch/arm64/configs/${{ env.KERNEL_DEFCONFIG }}
+        fi
+        if [ ${{ env.DISABLE-LTO }} = true ]; then
+            sed -i 's/CONFIG_LTO=y/CONFIG_LTO=n/' arch/arm64/configs/${{ env.KERNEL_DEFCONFIG }}
+            sed -i 's/CONFIG_LTO_CLANG=y/CONFIG_LTO_CLANG=n/' arch/arm64/configs/${{ env.KERNEL_DEFCONFIG }}
+            sed -i 's/CONFIG_THINLTO=y/CONFIG_THINLTO=n/' arch/arm64/configs/${{ env.KERNEL_DEFCONFIG }}
+            echo "CONFIG_LTO_NONE=y" >> arch/arm64/configs/${{ env.KERNEL_DEFCONFIG }}
+        fi
+
+    - name: Build kernel
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        COMPILERDIR="$GITHUB_WORKSPACE/kernel_workspace/tools/clang/host/linux-x86/clang-r428724" export PATH="$GITHUB_WORKSPACE/kernel_workspace/tools/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin:$PATH" export PATH="$GITHUB_WORKSPACE/kernel_workspace/tools/gcc/linux-x86/arm/arm-linux-androideabi-4.9/bin:$PATH" export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/kernel_workspace/tools/clang/host/linux-x86/clang-r428724/lib64:$LD_LIBRARY_PATH"
+        # Cleanup output
+        rm -rf out/outputs/generic/*
+        export KBUILD_BUILD_USER=Aju && export KBUILD_BUILD_HOST=
+        # Speed up build process
+        MAKE="./makeparallel"
+        Build () {
+        PATH="$GITHUB_WORKSPACE/kernel_workspace/tools/clang/host/linux-x86/clang-r428724/bin:${PATH}" make -j$(nproc --all) O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=$GITHUB_WORKSPACE/kernel_workspace/tools/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- CROSS_COMPILE_ARM32=$GITHUB_WORKSPACE/kernel_workspace/tools/gcc/linux-x86/arm/arm-linux-androideabi-4.9/bin/arm-linux-androideabi- LD_LIBRARY_PATH=$GITHUB_WORKSPACE/kernel_workspace/tools/clang/host/linux-x86/clang-r428724/lib64 Image.gz-dtb dtbo.img
+        }
+        Build_lld () {
+        PATH="$GITHUB_WORKSPACE/kernel_workspace/tools/clang/host/linux-x86/clang-r428724/bin:${PATH}" make -j$(nproc --all) O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=$GITHUB_WORKSPACE/kernel_workspace/tools/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- CROSS_COMPILE_ARM32=$GITHUB_WORKSPACE/kernel_workspace/tools/gcc/linux-x86/arm/arm-linux-androideabi-4.9/bin/arm-linux-androideabi- LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip ld-name=lld KBUILD_COMPILER_STRING="clang-r428724" Image.gz-dtb dtbo.img
+        }
+
+        miui_fix_dimens() {
+            sed -i 's/<70>/<695>/g' arch/arm64/boot/dts/qcom/dsi-panel-j20s-36-02-0a-lcd-dsc-vid.dtsi
+            sed -i 's/<154>/<1546>/g' arch/arm64/boot/dts/qcom/dsi-panel-j20s-36-02-0a-lcd-dsc-vid.dtsi
+            sed -i 's/<70>/<695>/g' arch/arm64/boot/dts/qcom/dsi-panel-j20s-42-02-0b-lcd-dsc-vid.dtsi
+            sed -i 's/<154>/<1546>/g' arch/arm64/boot/dts/qcom/dsi-panel-j20s-42-02-0b-lcd-dsc-vid.dtsi
+        }
+        restore_dimens() {
+            sed -i 's/<695>/<70>/g' arch/arm64/boot/dts/qcom/dsi-panel-j20s-36-02-0a-lcd-dsc-vid.dtsi
+            sed -i 's/<1546>/<154>/g' arch/arm64/boot/dts/qcom/dsi-panel-j20s-36-02-0a-lcd-dsc-vid.dtsi
+            sed -i 's/<695>/<70>/g' arch/arm64/boot/dts/qcom/dsi-panel-j20s-42-02-0b-lcd-dsc-vid.dtsi
+            sed -i 's/<1546>/<154>/g' arch/arm64/boot/dts/qcom/dsi-panel-j20s-42-02-0b-lcd-dsc-vid.dtsi
+        }
+        make O=out ARCH=arm64 ${{ env.KERNEL_DEFCONFIG }}
+        if [ $? -ne 0 ]
+        then
+            echo "Build failed"
+        else
+            echo "Made ${{ env.KERNEL_DEFCONFIG }}"
+        fi
+        if [ -z lld ]
+        then
+            Build
+        else
+            Build_lld
+        fi
+        if [ $? -ne 0 ]
+        then
+            echo "Build failed"
+        else
+            echo "Build succesful"
+            mkdir out/outputs && mkdir out/outputs/generic && find out/arch/arm64/boot/dts/qcom/ -name '*.dtb' -exec cat {} + >out/outputs/generic/dtb && cp out/arch/arm64/boot/dtbo.img out/outputs/generic/dtbo.img && cp out/arch/arm64/boot/${{ env.KERNEL_FILE }} out/outputs/generic/${{ env.KERNEL_FILE }}
+            #MIUI dtbo
+            #rm out/outputs/dtbo-miui.img
+            miui_fix_dimens
+            echo | Build_lld
+            if [ $? -ne 0 ]
+            then
+                rm out/outputs/dtbo-miui.img
+            else
+                cp out/arch/arm64/boot/dtbo.img out/outputs/dtbo-miui.img
+            fi
+            restore_dimens
+        fi
+
+    - name: Make Anykernel for your kernel
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        git clone https://github.com/ajugeorge98/AnyKernel3.git
+        sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
+        sed -i 's!block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!block=auto;!g' AnyKernel3/anykernel.sh
+        sed -i 's/is_slot_device=0;/is_slot_device=auto;/g' AnyKernel3/anykernel.sh
+        cp android-kernel/out/outputs/generic/${{ env.KERNEL_FILE }} AnyKernel3/
+        cp android-kernel/out/outputs/generic/dtbo.img AnyKernel3/
+        cp android-kernel/out/outputs/dtbo-miui.img AnyKernel3/
+        cp android-kernel/out/outputs/generic/dtb AnyKernel3/
+        rm -rf AnyKernel3/.git* AnyKernel3/README.md
+
+    - name: Upload AnyKernel3
+      uses: actions/upload-artifact@v3
+      with:
+        name: AnyKernel3-KernelSU-${{ env.DEVICE }}-${{ env.BUILD_TIME }}
+        path: kernel_workspace/AnyKernel3/*
+
