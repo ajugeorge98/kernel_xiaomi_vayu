@@ -12,7 +12,7 @@ on:
       KERNEL_SOURCE_BRANCH:
         description: 'Branch'
         required: true
-        default: 'main'
+        default: 'kernelsu'
       KERNEL_DEFCONFIG:
         description: 'Defconfig'
         required: true
@@ -37,7 +37,7 @@ on:
       USE_KERNELSU:
         description: 'Use KernelSU'
         required: true
-        default: 'false'
+        default: 'true'
         type: boolean
       USE_KPROBES:
         description: 'Use Kprobes'
