@@ -1,4 +1,4 @@
-name: Build Kernel-testv2
+name: Build Kernel-Vayu-4.14
 on:
   watch:
     types: [started]
